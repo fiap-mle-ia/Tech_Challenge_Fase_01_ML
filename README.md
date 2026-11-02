@@ -106,7 +106,7 @@ Depois de instalar, feche e abra o terminal. Outras formas de instalação estã
 **2. Clone o repositório:**
 
 ```bash
-git clone https://github.com/fiap-mle-grupo-28/Tech_Challenge_Fase_01_ML.git
+git clone https://github.com/fiap-mle-ia/Tech_Challenge_Fase_01_ML.git
 cd Tech_Challenge_Fase_01_ML
 ```
 
