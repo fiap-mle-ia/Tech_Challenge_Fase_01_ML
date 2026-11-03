@@ -21,3 +21,9 @@ htmlcov/
 
 # Modelos gerados por src/train.py (o oficial é models/02_modelo_campeao.joblib)
 models/modelo_retreinado*
+
+# Build e ferramentas
+build/
+dist/
+.mypy_cache/
+*.log
