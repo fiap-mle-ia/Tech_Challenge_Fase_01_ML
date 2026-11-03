@@ -2,21 +2,22 @@
 
 Projeto do **Tech Challenge da Fase 1 (12MLET, POSTECH)**, desenvolvido pelo **Grupo 28**.
 
-Um modelo de Machine Learning que classifica clientes de uma operadora de telecomunicações pelo risco de cancelamento (*churn*), servido por uma API REST. O trabalho vai da análise exploratória até o modelo em produção local, comparando um modelo linear, um baseado em árvores e uma rede neural simples, todos com scikit-learn.
+Um modelo de Machine Learning que classifica clientes de uma operadora de telecomunicações pelo risco de cancelamento (*churn*), servido por uma API REST. O trabalho vai da análise exploratória até o modelo servido localmente e no Google Cloud Run, comparando um modelo linear, um baseado em árvores e uma rede neural simples, todos com scikit-learn.
 
 ## 1. Sobre o projeto
 
 **Problema de negócio.** Uma operadora está perdendo clientes em ritmo acelerado, e a diretoria precisa de um modelo que aponte quais clientes têm maior risco de cancelar, para que a equipe de retenção priorize suas ações.
 
-**Dataset.** IBM Telco Customer Churn (dataset público da IBM), com 7.043 clientes e 33 colunas. 26,5% dos clientes cancelaram. O CSV já está em `data/`, não é preciso baixá-lo.
+**Dataset.** IBM Telco Customer Churn (dataset público da IBM), com 7.043 clientes da Califórnia (EUA) e 33 colunas. 26,5% dos clientes cancelaram, então a base é desbalanceada: um modelo que previsse que ninguém cancela acertaria cerca de 73%, por isso a acurácia não é usada como métrica principal. O CSV já está em `data/`, não é preciso baixá-lo.
 
 **Métricas.** F1 da classe churn (principal), AUC-ROC (secundária) e precision e recall (apoio). Como métrica de negócio, a parcela da cobrança mensal dos clientes que cancelaram que o modelo consegue sinalizar.
 
 **Decisões técnicas principais:**
 
 - **Limpeza:** remoção das colunas com risco de vazamento do alvo (`Churn Label`, `Churn Score`, `Churn Reason` e, por precaução, `CLTV`), das constantes e das geográficas. O `TotalCharges` em branco (11 clientes novos, com `tenure` 0) foi preenchido com 0.
-- **Pré-processamento dentro do `Pipeline`:** `StandardScaler` nas numéricas e `OneHotEncoder` nas categóricas, de modo que o treino e a API usam exatamente a mesma transformação.
-- **Modelo final:** Random Forest (200 árvores, profundidade máxima 10, `class_weight="balanced"`), escolhido por `GridSearchCV` com validação cruzada de 5 folds.
+- **Pré-processamento dentro do `Pipeline`:** `StandardScaler` nas 4 numéricas e `OneHotEncoder(drop="first")` nas 15 categóricas, gerando 30 atributos, seguidos de `SelectKBest(k="all")`. O treino e a API usam exatamente a mesma transformação.
+- **Seleção de atributos:** o GridSearch testou manter 10, 20 ou todos os atributos no `SelectKBest`, e usar todos foi melhor.
+- **Modelo final:** Random Forest (200 árvores, profundidade máxima 10, `class_weight="balanced"`), escolhido por `GridSearchCV` com validação cruzada de 5 folds, pelo F1 médio da validação e sem olhar o teste. Foram 76 combinações (72 de Random Forest e 4 de MLP), registradas em `models/02_experimentos_gridsearch.csv`.
 - **Limiar de decisão:** 0,5, definido em `src/config.py`.
 - **API:** o modelo é carregado na subida, a entrada é validada com Pydantic e a latência de cada requisição vai no cabeçalho `X-Process-Time`.
 
@@ -30,6 +31,8 @@ Um modelo de Machine Learning que classifica clientes de uma operadora de teleco
 | Regressão Logística (baseline) | 0,620 ± 0,031 | 0,606 | 0,849 | 0,645 | 0,572 |
 
 Métricas de teste em 1.409 clientes (divisão 80/20 estratificada, seed 42). O campeão identifica 78% dos clientes que cancelaram (291 de 374), e 54% dos clientes que ele sinaliza realmente cancelariam.
+
+**Métrica de negócio.** Os clientes sinalizados pelo campeão concentram 80,5% da cobrança mensal dos clientes que cancelaram, sinalizando 38% da base de teste (539 de 1.409 clientes). Isso mede alcance, não dinheiro recuperado, porque nenhuma ação de retenção foi simulada.
 
 Os modelos têm AUC equivalente. Boa parte da vantagem do Random Forest sobre o baseline vem do `class_weight="balanced"`: com os mesmos pesos, a Regressão Logística chega perto (+0,009 de F1 na validação cruzada e +0,020 no teste, com o mesmo recall e 29 alarmes falsos a menos para o Random Forest). A escolha do campeão se mantém, mas a vantagem é pequena.
 
@@ -298,10 +301,10 @@ uv run pytest                      # todos os testes
 uv run pytest -m "not slow"        # pula os testes que retreinam o modelo completo
 uv run pytest --cov=src            # com cobertura de código
 uv run ruff check .                # lint (configurado no pyproject.toml)
-uv run ruff format --check .        # formatação
+uv run ruff format --check .       # formatação
 ```
 
-Os testes cobrem o pré-processamento, o pipeline, a inferência, a avaliação complementar e a API (`/health`, `/predict` e as respostas `422`, `503` e `500`). Os testes marcados como `slow` retreinam o modelo e conferem se ele reproduz as métricas da Etapa 2.
+São 69 testes, com 94% de cobertura do código em `src/`. Os testes cobrem o pré-processamento, o pipeline, a inferência, a avaliação complementar e a API (`/health`, `/predict` e as respostas `422`, `503` e `500`). Os testes marcados como `slow` retreinam o modelo e conferem se ele reproduz as métricas da Etapa 2.
 
 ## 8. Notebooks
 
@@ -338,19 +341,28 @@ uv run python -m src.evaluate
 
 O [Model Card](docs/MODEL_CARD.md) documenta a avaliação técnica detalhada, métricas de desempenho, análise de vieses por subgrupo e restrições operacionais. Os pontos de atenção e diretrizes de uso incluem:
 
-- **Propensão:** O modelo fornece estimativas de propensão ao cancelamento para ordenação e priorização de contato, não garantindo que o cliente efetivamente cancelará o serviço.
-- **Uso ético e humano:** Não deve ser utilizado como fundamento exclusivo para decisões punitivas, cancelamento preventivo ou aplicação automática de medidas prejudiciais aos clientes sem supervisão humana.
-- **Qualidade e representatividade:** O desempenho depende da manutenção da qualidade e do formato dos dados de entrada, bem como do monitoramento contínuo de distribuições.
+- **Propensão:** o modelo fornece estimativas de propensão ao cancelamento para ordenação e priorização de contato, não garantindo que o cliente efetivamente cancelará o serviço.
+- **Uso ético e humano:** não deve ser utilizado como fundamento exclusivo para decisões punitivas, cancelamento preventivo ou aplicação automática de medidas prejudiciais aos clientes sem supervisão humana.
+- **Qualidade e representatividade:** o desempenho depende da manutenção da qualidade e do formato dos dados de entrada, bem como do monitoramento contínuo de distribuições.
 - **Vantagem do campeão:** é pequena em relação à Regressão Logística balanceada, e todos os modelos têm AUC equivalente.
 - **Sobreajuste:** o modelo vai bem melhor no treino (F1 0,772) do que no teste (F1 0,637). As métricas de referência são as da validação cruzada e do teste, que concordam entre si.
-- **Falsos alarmes e subgrupos:** Quase metade dos clientes sinalizados não cancelaria (46% de alarmes falsos no limiar de 0,5). Entre os clientes que permaneceram, 46% dos com 65 anos ou mais são sinalizados indevidamente, contra 21% dos demais, o que concentra as abordagens desnecessárias nesse grupo.
+- **Falsos alarmes e subgrupos:** quase metade dos clientes sinalizados não cancelaria (46% de alarmes falsos no limiar de 0,5). Entre os clientes que permaneceram, 46% dos com 65 anos ou mais são sinalizados indevidamente, contra 21% dos demais, o que concentra as abordagens desnecessárias nesse grupo.
+- **Clientes com dependentes:** o recall cai para 37% nesse grupo, ou seja, o modelo deixa passar a maior parte dos cancelamentos entre esses clientes.
 
-## 12. Equipe
+## 12. Equipe e trabalho em grupo
 
 Grupo 28:
 
-- Derek Seiji Lima Sadakane
-- Gustavo Eidi Kono Masuno
-- Jônatas Gomes Alves
-- Leandro Kersting de Freitas
-- Matheus de Souza Gonçalves
+| Integrante | GitHub | Principais contribuições |
+|---|---|---|
+| Matheus de Souza Gonçalves | [Mattheus-SG](https://github.com/Mattheus-SG) | Etapa 1: EDA, baseline de Regressão Logística e gráficos de `outputs/` |
+| Derek Seiji Lima Sadakane | [Derek759](https://github.com/Derek759) | Etapa 2: notebook de modelagem (Random Forest, MLP, validação cruzada e GridSearch), modelo campeão e registro dos experimentos |
+| Jônatas Gomes Alves | [jonatasgomes](https://github.com/jonatasgomes) | Etapa 3: ambiente com `pyproject.toml` e `uv.lock`, refatoração para `src/`, testes com pytest e API FastAPI |
+| Gustavo Eidi Kono Masuno | [gustavomasuno](https://github.com/gustavomasuno) | Etapa 4: Model Card e primeira versão do README |
+| Leandro Kersting de Freitas | [frekele](https://github.com/frekele) | Revisão final: avaliação reprodutível (`src/evaluate.py`), correções na API e nos testes, revisão da EDA e da documentação, Dockerfile e deploy no Google Cloud Run |
+
+**Evidências no histórico de commits:**
+
+- [Contribuidores do repositório](https://github.com/fiap-mle-ia/Tech_Challenge_Fase_01_ML/graphs/contributors): commits de cada integrante ao longo do tempo.
+- [Histórico de commits da `main`](https://github.com/fiap-mle-ia/Tech_Challenge_Fase_01_ML/commits/main): mensagens e autoria de cada commit.
+- [Branches das etapas](https://github.com/fiap-mle-ia/Tech_Challenge_Fase_01_ML/branches/all): cada etapa foi desenvolvida em uma branch própria (`feat/fase1`, `feat/fase2`, `feat/fase3` e `docs/fase4`), e as correções da revisão final entraram por pull requests.
