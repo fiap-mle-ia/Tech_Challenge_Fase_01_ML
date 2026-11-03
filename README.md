@@ -49,6 +49,7 @@ A análise completa, incluindo as limitações e o desempenho por grupo, está n
 | 3. Engenharia de software e API | Código refatorado em módulos, testes com pytest e API FastAPI | `src/` e `tests/` |
 | 4. Documentação e entrega final | Model Card e README | `docs/MODEL_CARD.md` e `README.md` |
 | 4. Documentação e entrega final | Vídeo de apresentação (método STAR) | Entregue à parte, fora do repositório |
+| 4. Documentação e entrega final | Apresentação usada no vídeo | [Slides no Canva](https://canva.link/04i2f1cobrybgwp) |
 
 ## 4. Estrutura do repositório
 
